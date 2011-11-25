@@ -1,0 +1,11 @@
+Package: mim
+Type: Package
+Title: Multiple interaction for glm and coxph models
+Version: 1.0
+Date: 2011-10-30
+Author: Stephanie Kovalchik and Ravi Varadhan
+Maintainer: Stephanie Kovalchik <s.a.kovalchik@gmail.com>
+Description: Fits the Follmann and Proschan's restricted model of a multivariate interaction.
+License: GPL
+Depends: survival, graphics, stats, methods, MASS
+LazyLoad: yes

@@ -1,0 +1,5 @@
+export(mim)
+importFrom(stats,coef,vcov,predict)
+importFrom(graphics,plot)
+exportClasses(mim)
+exportMethods(summary,print,show,coef,vcov,plot)
