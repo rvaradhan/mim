@@ -20,8 +20,10 @@ Objects can be created by calls of the form \code{new("mim", ...)}.
     \item{\code{fit.glm}:}{Restricted \code{glm} object for \code{glm} \code{mim} model.}
     \item{\code{fit.coxph}:}{Restricted \code{coxph} object for \code{coxph} \code{mim} model.}
     \item{\code{coxph}:}{Logical, whether \code{coxph} model.}
+    \item{\code{exact}:}{Logical, whether exact method used for fitting.}
     \item{\code{data}:}{Data frame containing the outcomes and explanatory variables.}
-    \item{\code{T}:}{Likelihood ratio test statistic testing restricted \code{mim} model against a model with only main effects}
+    \item{\code{T}:}{Wald based test of a!=1 against no interaction model used when \code{exact} is \code{FALSE}}
+    \item{\code{LRT}:}{Likelihood ratio test of a!=1 against no interaction model used when \code{exact} is \code{TRUE}}
     \item{\code{a}:}{Proportional interaction parameter}
 }
 

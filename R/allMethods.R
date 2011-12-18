@@ -48,7 +48,8 @@ setMethod("summary","mim",
                 }
                 
             x <- summary(fit)
-            x$T <- object@T
+            x$test <- ifelse(length(object@T)==0,object@LRT,object@T)
+            test.name <-  ifelse(length(object@T)==0,"LRT","t-test")
             x$a <- object@a
             
             print(summary(fit))
@@ -58,13 +59,13 @@ setMethod("summary","mim",
             
             interaction.summary <- matrix(c(
                                     object@a,
-                                    object@T,
-                                    pchisq(object@T,df=1,lower=FALSE)
+                                    x$test,
+                                    pchisq(x$test,df=1,lower=FALSE)
                                     ),ncol=1)
             
             rownames(interaction.summary) <- c(
                                         "Interaction parameter",
-                                        "t-value",
+                                        test.name,
                                         "p-value"
                                         )
                                         
@@ -80,35 +81,52 @@ setMethod("summary","mim",
 
 setMethod("predict","mim",
     function(object,...){
-    
+
+    data.trt <- object@data
+    data.ctrl <- object@data
+
+    data.trt[[object@formula.object$trt]] <- 1
+    data.ctrl[[object@formula.object$trt]] <- 0
+
+    a <- ifelse(object@exact,object@a,1)
+
     if(object@coxph){
-        predict(object@fit.coxph,...)
-    }
+      f <- object@fit.coxph$formula
+      }
     else{
-        predict(object@fit.glm,...)
+      f <-object@fit.glm$formula
+    }
+
+    ctrl.var <- match(all.vars(f),names(data.trt)) #CONTROL VAR CORRECTION FOR GLM/EXACT
+    ctrl <- any(is.na(ctrl.var))
+
+    if(ctrl){
+      data.trt[[all.vars(f)[which(is.na(ctrl.var))]]] <- 0
+      data.ctrl[[all.vars(f)[which(is.na(ctrl.var))]]] <- 1
     }
     
-    })
+    X.trt <- model.matrix(f,data.trt)
+    X.ctrl <- model.matrix(f,data.ctrl)
+
+    p.trt <- X.trt%*%(object@coef*a)
+    p.ctrl <- X.ctrl%*%object@coef
+
+    data.frame(pred.trt=p.trt,pred.ctrl=p.ctrl)
+ })
     
 
 setMethod("plot","mim",
     function(x,y,...){
-    
-    control.data <- x@data
-    control.data[,x@formula.object$trt] <- 0
-    
-    trt.data <- x@data
-    trt.data[,x@formula.object$trt] <- 1
-   
-    beta <- rep(1,length(coef(x)))
-    X <- model.matrix(control.data,x@formula.object$formula)
-    S <- X%*%beta 
-    
-    p0 <- predict(y,newdata=control.data)
-    p1 <- predict(y,newdata=trt.data)
 
-    plot(y=p0,x=S,...)
-    point(y=p1,x=S)
+    p <- predict(x)
+    
+    p0 <- p$pred.ctrl
+    p1 <- p$pred.trt
+
+    plot(y=p0,x=p0,xlab="prediction without modification",
+         ylab="prediction with modification",...)
+    points(y=p1,x=p0,col="blue")
+    legend("topleft",pch=1,col=c("black","blue"),legend=c("Control","Treated"))
 
     })
     

@@ -1,6 +1,6 @@
-mim <- function(formula,data,family=gaussian,select=FALSE,...){
+mim <- function(formula,data,family=gaussian,exact=TRUE,select=FALSE,interval=c(-2,2),...){
 
-	formula.interaction <- function(f=y~(a+b)*trt,cox=FALSE){
+formula.interaction <- function(f=y~(a+b)*trt,cox=FALSE,family){
 		
 		pattern = "\\(.*\\+.*\\) \\*.*"
 		
@@ -29,15 +29,17 @@ mim <- function(formula,data,family=gaussian,select=FALSE,...){
 		a0.index = match(ctrl,labels)
 		
 		list(f=formula,
-			 beta0.index=beta0.index,
+		         beta0.index=beta0.index,
 			 beta1.index=beta1.index,
 			 a0.index=a0.index,
 			 a1.index=a1.index,
 			 trt=trt,
-			 selection.formula=selection.formula) 
+			 selection.formula=selection.formula,
+                         cox=cox,
+                         family=family) 
 	}
 	
-	selection.update <- function(formula.old,formula.new){
+selection.update <- function(formula.old,formula.new){
 		
 		pattern = "(.*)\\(?(.*)\\)?( \\* )([a-zA-Z]+)(.*)"
 		pattern.replace = "(.*)(\\(.*)\\))( \\* )([a-zA-Z]+)(.*)"
@@ -49,9 +51,8 @@ mim <- function(formula,data,family=gaussian,select=FALSE,...){
 		f.replaced
 	}
 
-	glm.or.coxph <-
-	
-	function(formula,data,family=gaussian,select=FALSE,...){
+
+get.formula <- function(formula,data,family=gaussian,select=FALSE,...){
 		
 		cox <- FALSE
 		
@@ -65,62 +66,46 @@ mim <- function(formula,data,family=gaussian,select=FALSE,...){
 		}
 		
 		if (is.function(family)) 
-        family <- family()
+                  family <- family()
         
 		if (is.null(family)|(is.list(family)&&is.null(family$family))) {
-			print(family)
 			stop("'family' not recognized")
 		}
+
+                       
+		formula.object <- formula.interaction(formula,cox,family)
 		
-		formula.object <- formula.interaction(formula,cox)
-		
-		if(select){
-	
-			if(cox){				
-				selection.fit <- coxph(formula.object$selection.formula,data=data,...)				
+	if(select){
+           if(formula.object$cox){				
+		 selection.fit <- coxph(formula.object$selection.formula,data=data,...)		
 			}
-			else{				
-				selection.fit <- glm(formula.object$selection.formula,data=data,family=family,...)				
-			}
+	    else{				
+		 selection.fit <- glm(formula.object$selection.formula,data=data,family=formula.object$family,...)
+               }
 			
-			fit.interaction <- stepAIC(selection.fit,direction="backward")
-			
-			if(is.null(coef(fit.interaction))) stop("No terms of interaction selected.")
-			
-		    f <- selection.update(formula,fit.interaction$formula)
-			
-			formula.object <- formula.interaction(f,cox)
-			
+          fit.interaction <- stepAIC(selection.fit,direction="backward")			
+          if(is.null(coef(fit.interaction))) stop("No terms of interaction selected.")	
+
+           f <- selection.update(formula,fit.interaction$formula)			
+	   formula.object <- formula.interaction(f,cox,family)			
 		
 		}
-										
+ formula.object
+}
+
 		
-		if(cox){
-			
-			fit <- coxph(formula.object$f,data=data,...)
-			
-		}
-		else{
-			
-			fit <- glm(formula.object$f,data=data,family=family,...)
-			
-		}
+follmann.test <- function(fit,formula.object){
 		
-		list(fit=fit,formula.object=formula.object)
-	}
-	
-	
-	follmann.test <- function(fit){
-		
-		V <- vcov(fit$fit)
-		
-		vmat1 <- V[fit$formula.object$beta0.index,fit$formula.object$beta0.index]
-		vmat2 <- V[fit$formula.object$beta1.index,fit$formula.object$beta1.index]
+		V <- vcov(fit)
+		coef <- coef(fit)
+                
+		vmat1 <- V[formula.object$beta0.index,formula.object$beta0.index]
+		vmat2 <- V[formula.object$beta1.index,formula.object$beta1.index]
 		vmat <- (vmat1 + vmat2)/2
 		vc <- solve(t(chol(vmat)))
 		
-		U0 <- c(vc %*% fit$fit$coef[fit$formula.object$beta0.index])
-		U1 <- c(vc %*% fit$fit$coef[fit$formula.object$beta1.index])
+		U0 <- c(vc %*% coef[formula.object$beta0.index])
+		U1 <- c(vc %*% coef[formula.object$beta1.index])
 		R <- sqrt(sum(U1*U1)/sum(U0*U0))
 		cost <- sum(U0 * U1) / sqrt(sum(U1*U1) * sum(U0 * U0))
 		a <- ((R - 1/R) + sqrt((R - 1/R)^2 + 4 * cost^2)) / (2 * cost)
@@ -129,72 +114,155 @@ mim <- function(formula,data,family=gaussian,select=FALSE,...){
 		u1 <- a * u0
 		T <- sum((U1 - U0)^2)/2 - sum((U1 - u1)^2) - sum((U0 - u0)^2)
 		
-		list(T=T,a=a)
+		list(T=T,a=1/a,LRT=numeric(0))
 	}
-	
-       exact.follmann.test <- function(fit){
 
-         #WRITING FUNCTION TO INPUT SCALING CONSTANT AND OPTIMIZE
-         #TEST AGAINST MODEL WITH NO INTERACTION EFFECT
-         
-cox.fn <- function(a, data) {
-f <- coxph(Surv(dt, e) ~ trt + I((1 + (a-1)*trt)*x1) + I((1 + (a-1)*trt)*x2), data=data)
--f$loglik[2]
-}
+follmann.exact <- function(f.object,data,interval=c(-2,2),...){
 
-a <- optimize(f=cox.fn, interval=c(-4,4), data=data)$min
+for.optimizer <- function(prp.factor,data,f.object){
+                    #FUNCTION OF PROPORTIONAL FACTOR USED IN EXACT OPTIMIZATION PROCEDURE
+                    #FACTOR IS APPLIED TO ALL TREATMENT COVARIATES BEFORE FITTING
+   prpdf <- model.matrix(f.object$f,data)
+   if(f.object$cox&all(prpdf[,1]==1)) prpdf <- prpdf[,-1]
+   prpdf[,f.object$beta0.index] <- prpdf[,f.object$beta0.index]*prp.factor
+   prpdf[,f.object$beta0.index] <- prpdf[,f.object$beta0.index]+prpdf[,f.object$beta1.index]
+   prpdf <- prpdf[,-f.object$beta1.index]
 
-f1 <- coxph(Surv(dt, e) ~ trt + I((1-trt)*x1 + a*trt*x1) + I((1-trt)*x2 + a*trt*x2), data=data)
+   var.names <- all.vars(f.object$f)
+   response.index <- 1
 
-f0 <- coxph(Surv(dt, e) ~ trt + x1 + x2, data=data)
-T <- 2*(f1$loglik[2] - f0$loglik[2])
+   if(f.object$cox) response.index <- 1:2
 
-logit.fn <- function(a, data) {
-f <- glm(Y ~ Tx + I((1 + (a-1)*Tx)*age) + I((1 + (a-1)*Tx)*sex) + I((1 + (a-1)*Tx)*genhel) + I((1 + (a-1)*Tx)*lvef), data=data, family=binomial)
-f$deviance
-}
-
-a <- optimize(f=logit.fn, interval=c(-4,4), data=data)$min
-
-f1 <- glm(Y ~ Tx + I((1 + (a-1)*Tx)*age) + I((1 + (a-1)*Tx)*sex) + I((1 + (a-1)*Tx)*genhel) + I((1 + (a-1)*Tx)*lvef), data=data, family=binomial)
-
-f0 <- glm(Y ~ Tx + age + sex + genhel + lvef, data=data, family=binomial)
-lrt <- f0$deviance - f1$deviance
-lrt
-
-       }
-
-        
-  fit <- glm.or.coxph(formula,data,family,select=select,...)
-  test <- follmann.test(fit)
-  coxph <- class(fit$fit)[1]=="coxph"
+   response <- var.names[response.index]
+   covar.names <- var.names[-response.index]
+   covar.names <- covar.names[covar.names!=f.object$trt]
   
-  
-  if(coxph){
-      new("mim",
-		 coef=coef(fit$fit),
-		 vcov=vcov(fit$fit),
-		 formula.object=fit$formula.object,
-                 fit.coxph = fit$fit,
-                 coxph = coxph,
-		 data=data,
-		 T=test$T,
-		 a=1/test$a
-		 )
+   prpdf <- data.frame(prpdf)
+   names(prpdf)[f.object$beta0.index] <- covar.names
+
+   exact.formula <- paste("~-1+",paste(names(prpdf),collapse="+"),collapse="")
+   exact.formula <- update(f.object$f,exact.formula)
+     
+   for(var in response){
+    prpdf[[var]] <- data[,var]
+  }
+   
+  if(f.object$cox){
+    fit <- coxph(exact.formula,data=prpdf)
+    -fit$loglik[2]
   }
   else{
-      new("mim",
-		 coef=coef(fit$fit),
-		 vcov=vcov(fit$fit),
-		 formula.object=fit$formula.object,
-                 fit.glm = fit$fit,
-                 coxph = coxph,
-		 data=data,
-		 T=test$T,
-		 a=1/test$a
-		 )
+   fit <- glm(exact.formula,data=prpdf,family=f.object$family)
+   -as.numeric(logLik(fit)) 
+ }
+}
+
+for.fit <- function(prp.factor,data,f.object){ #RETURN FINAL FIT WITH OPTIMAL PROP FACTOR
+
+   prpdf <- model.matrix(f.object$f,data) 
+   if(f.object$cox&all(prpdf[,1]==1)) prpdf <- prpdf[,-1]
+   prpdf[,f.object$beta0.index] <- prpdf[,f.object$beta0.index]*prp.factor
+   prpdf[,f.object$beta0.index] <- prpdf[,f.object$beta0.index]+prpdf[,f.object$beta1.index]
+   prpdf <- prpdf[,-f.object$beta1.index]
+
+   var.names <- all.vars(f.object$f)
+   response.index <- 1
+   if(f.object$cox) response.index <- 1:2
+   response <- var.names[response.index]
+   covar.names <- var.names[-response.index]
+   covar.names <- covar.names[covar.names!=f.object$trt]
+  
+   prpdf <- data.frame(prpdf)
+   names(prpdf)[f.object$beta0.index] <- covar.names
+   
+   exact.formula <- paste("~-1+",paste(names(prpdf),collapse="+"),collapse="")
+   exact.formula <- update(f.object$f,exact.formula)
+     
+   for(var in response){
+    prpdf[[var]] <- data[,var]
+  }
+   
+  if(f.object$cox){
+    fit <- coxph(exact.formula,data=prpdf)
+    }
+  else{
+   fit <- glm(exact.formula,data=prpdf,family=f.object$family)
+  }
+   
+fit
+}
+
+   result <- optimize(f=for.optimizer,interval=interval,data=data,f.object=f.object)
+   loglik <- result$obj
+   fit <- for.fit(result$min,data,f.object=f.object)
+
+## LIKELIHOOD RATIO TEST FOR INTERACTION AGAINST NO INTERACTION MODEL
+
+   response.index <- 1
+   if(f.object$cox) response.index <- 1:2
+
+   var.names <- all.vars(f.object$f)
+   null.formula <- paste("~",paste(var.names[-response.index],collapse="+"),collapse="")
+   null.formula <- update(f.object$f,null.formula)
+
+   null.df <- data[var.names]
+ 
+   if(f.object$cox){
+    fit.null <- coxph(null.formula,data=null.df)
+    loglik.null <- -fit.null$loglik[2]
+   }
+  else{
+    fit.null <- glm(null.formula,data=null.df,family=f.object$family)
+    loglik.null <- -as.numeric(logLik(fit.null))
   }
 
+   list(
+        fit=fit,
+        test=list(
+          a = result$min,
+          T = numeric(0),
+          LRT = 2*(loglik.null-loglik)
+          )
+        )
+}
+
+follmann.fit <- function(f.object,data,...){
+  
+    if(f.object$cox){
+      
+      fit <- coxph(f.object$f,data=data,...)
+      test <- follmann.test(fit,f.object)
+      
+      }
+    else{      
+      fit <- glm(f.object$f,data=data,family=f.object$family,...)
+      test <- follmann.test(fit,f.object)
+     }
+     
+     list(fit=fit,test=test)
+}
+
+  formula.object <- get.formula(formula,data,family,select)
+  
+  if(!exact){
+    fit <- follmann.fit(formula.object,data,...)
+  }
+  else{
+    fit <- follmann.exact(formula.object,data,interval,...)
+  }
+   
+  coxph <- class(fit$fit)[1] == "coxph"
+
+ if (coxph) {
+        new("mim", coef = coef(fit$fit), vcov = vcov(fit$fit), 
+            formula.object = formula.object, fit.coxph = fit$fit,coxph = coxph,
+            exact = exact, data = data, T = fit$test$T, LRT = fit$test$LRT, a = fit$test$a)
+    }
+    else {
+        new("mim", coef = coef(fit$fit), vcov = vcov(fit$fit), 
+            formula.object = formula.object, fit.glm = fit$fit, coxph = coxph,
+            exact = exact, data = data, T = fit$test$T, LRT = fit$test$LRT, a =fit$test$a)
+    }
 }
 
 

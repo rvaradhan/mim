@@ -5,24 +5,26 @@
 
 \description{
 
-Performs a multivariate test of an interaction with a binary intervention/treatment and multiple covariates for Cox or generalized linear model.
+Fits and tests for a multivariate interaction with \code{coxph} or \code{glm} model.
 
 }
 
 \usage{
-mim(formula,data,family=gaussian,select=FALSE,...)
+mim(formula,data,family=gaussian,exact=TRUE,select=FALSE,interval=c(-2,2),...)
 }
 
 \arguments{
   \item{formula}{multiple interaction formula for \code{glm} or \code{coxph}, see details}
   \item{data}{data.frame containing the variables of \code{formula}}
   \item{family}{family supplied to \code{family} for \code{glm}, or character "coxph" if \code{coxph} model is fit}
-  \item{select}{If \code{TRUE}, a stepwise backward selection using AIC is applied to a model with interaction variables.}
+ \item{exact}{logical, If \code{TRUE} an exact estimate of the proportional interaction parameter is obtained}
+  \item{select}{logical, If \code{TRUE}, a stepwise backward selection using AIC is applied to a model with interaction variables.}
+  \item{interval}{supplied to \code{optimize} when \code{exact} estimation is used. Vector of min and max for the proportional interaction parameter.}
   \item{...}{additional arguments supplied to fit formula, \code{glm} or \code{coxph}}
 }
 
 \value{
-Returns list with \code{fit} and multiple interaction statistic \code{T}.
+Returns instance of \code{mim} class.
 }
 
 \details{
@@ -35,15 +37,15 @@ To test a multiple interaction between treatment variable indicator \code{z} (bi
 
 \examples{
 
-set.seed(1234)
+set.seed(11903)
 
 #FOLLMAN LOGISTIC MODEL
 #DATA GENERATION
 
 N0 <- 1000             
-pars <- c(-3, -2, 0.1, 0.4, -0.4, -0.7, 0.6)
+pars <- c(-3, -1, 0.1, 0.4, -0.4, -0.7, 0.6)
 
-Tx <- rbinom(N0, size=1, prob = 1/3)
+Tx <- rbinom(N0, size=1, prob = 1/2)
 age <- rlnorm(meanlog=log(64), N0, sdlog=0.1)
 sex <- rbinom(N0, 1, prob=0.45)	# 1 FOR FEMALE
 lvef <- rbeta(N0, shape1=1.0, shape2=1.3)
@@ -56,11 +58,18 @@ Y <- rbinom(N0, size=1, prob=plogis(lpred))
 
 data <- data.frame(age, sex, lvef, Tx, Y)
 
-#MODEL FIT
-res1 <- mim(Y ~(age + sex + lvef)*Tx,data=data,family=binomial)
+#FOLLMANN MODEL FIT
+res1 <- mim(Y ~(age + sex + lvef)*Tx,data=data,family=binomial,exact=FALSE)
 res1
 coef(res1)
 summary(res1)
+
+#EXACT MODEL FIT
+res1 <- mim(Y ~(age + sex + lvef)*Tx,data=data,family=binomial,exact=TRUE)
+res1
+coef(res1)
+summary(res1)
+
 
 #COX MODEL
 #DATA GENERATION
@@ -71,7 +80,7 @@ n <- 1000
 trt <- rbinom(n, size=1, prob=0.4)
 x1 <- rbinom(n, size=1, prob=0.3)
 x2 <- rnorm(n, mean=1, sd=0.5)
-noise <- runif(n)
+noise <- rep(c(1,0),length=n)
 
 linear.pred <- pars[1] * trt + (1 + trt*(pars[4]-1)) * (pars[2]*x1 + pars[3] * x2)
 
@@ -81,13 +90,20 @@ Tcens <- quantile(dt, probs=0.7)
 
 e <- ifelse(dt <= Tcens, 1, 0)
 dt <- pmin(dt, Tcens)
-data <- data.frame(time=dt, event=e, trt=trt, x1=x1, x2=x2)
+data <- data.frame(time=dt, event=e, trt=trt, x1=x1, x2=x2, noise=noise)
 
-#MODEL FIT
-res1 <- mim(Surv(time,event)~(x1+x2+noise)*trt,data=data,family="coxph",select=TRUE)
+#FOLLMANN MODEL FIT
+res1 <- mim(Surv(time,event)~(x1+x2+noise)*trt,data=data,family="coxph",exact=FALSE,select=TRUE)
 res1
 coef(res1)
 summary(res1)
+
+#EXACT MODEL FIT
+res1 <- mim(Surv(time,event)~(x1+x2)*trt,data=data,family="coxph",exact=TRUE,select=TRUE)
+res1
+coef(res1)
+summary(res1)
+
 }
 
 
